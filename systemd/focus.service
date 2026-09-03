@@ -1,0 +1,13 @@
+[Unit]
+Description=Focus Study Mode Service
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'while true; do sleep 60; done'
+Restart=always
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=default.target

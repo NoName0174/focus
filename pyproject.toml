@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "focus"
+version = "1.0.0"
+description = "Study mode for Linux — block distractions, track progress, stay focused."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = [
+    "rich>=13.0",
+    "prompt_toolkit>=3.0",
+]
+
+[project.scripts]
+focus = "focus.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["focus*"]
