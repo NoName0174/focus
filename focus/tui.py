@@ -349,6 +349,7 @@ def run_session_interactive(duration_seconds: int, config: Config) -> dict[str, 
         is_break=False,
         break_is_long=False,
         time_remaining_seconds=work_seconds,
+        phase_total_seconds=work_seconds,
         total_work_seconds=0,
     )
 

@@ -16,6 +16,7 @@ class PomodoroState:
     is_break: bool = False
     break_is_long: bool = False
     time_remaining_seconds: int = 0
+    phase_total_seconds: int = 0
     total_work_seconds: int = 0
 
 
@@ -26,6 +27,7 @@ def create_pomodoro_timer(config: PomodoroConfig) -> PomodoroState:
         is_break=False,
         break_is_long=False,
         time_remaining_seconds=config.work_minutes * 60,
+        phase_total_seconds=config.work_minutes * 60,
         total_work_seconds=0,
     )
 
@@ -37,6 +39,7 @@ def tick(state: PomodoroState, elapsed_seconds: int = 1) -> PomodoroState:
         is_break=state.is_break,
         break_is_long=state.break_is_long,
         time_remaining_seconds=max(0, state.time_remaining_seconds - elapsed_seconds),
+        phase_total_seconds=state.phase_total_seconds,
         total_work_seconds=state.total_work_seconds + (0 if state.is_break else elapsed_seconds),
     )
 
@@ -58,6 +61,7 @@ def advance(state: PomodoroState, config: PomodoroConfig) -> PomodoroState:
                 is_break=True,
                 break_is_long=True,
                 time_remaining_seconds=config.long_break_minutes * 60,
+                phase_total_seconds=config.long_break_minutes * 60,
                 total_work_seconds=total_work_seconds,
             )
 
@@ -67,6 +71,7 @@ def advance(state: PomodoroState, config: PomodoroConfig) -> PomodoroState:
             is_break=True,
             break_is_long=False,
             time_remaining_seconds=config.short_break_minutes * 60,
+            phase_total_seconds=config.short_break_minutes * 60,
             total_work_seconds=total_work_seconds,
         )
 
@@ -76,6 +81,7 @@ def advance(state: PomodoroState, config: PomodoroConfig) -> PomodoroState:
         is_break=False,
         break_is_long=False,
         time_remaining_seconds=config.work_minutes * 60,
+        phase_total_seconds=config.work_minutes * 60,
         total_work_seconds=state.total_work_seconds,
     )
 
@@ -97,13 +103,15 @@ def format_time(seconds: int) -> str:
 
 
 def get_progress(state: PomodoroState, config: PomodoroConfig) -> float:
-    phase = get_current_phase(state)
-    if phase == "work":
-        total = config.work_minutes * 60
-    elif phase == "long_break":
-        total = config.long_break_minutes * 60
-    else:
-        total = config.short_break_minutes * 60
+    total = state.phase_total_seconds
+    if total <= 0:
+        phase = get_current_phase(state)
+        if phase == "work":
+            total = config.work_minutes * 60
+        elif phase == "long_break":
+            total = config.long_break_minutes * 60
+        else:
+            total = config.short_break_minutes * 60
 
     if total == 0:
         return 1.0
