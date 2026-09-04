@@ -27,6 +27,9 @@ ESSENTIAL_APPS = {
     "gnome-control-center", "systemsettings", "xfce4-settings",
     "org.gnome.Nautilus", "org.kde.dolphin", "org.wezfurlong.wezterm",
     "org.gnome.Terminal",
+    # admin / restore-critical — blocking these would lock the session out
+    "sudo", "su", "pkexec", "systemctl", "journalctl", "gsettings",
+    "chmod", "chown", "cp", "mv", "rm", "ln",
 }
 
 

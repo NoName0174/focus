@@ -8,8 +8,13 @@ import time
 from typing import Any
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
+from prompt_toolkit.layout.containers import HSplit, Window
+from prompt_toolkit.layout.controls import FormattedTextControl, BufferControl
+from prompt_toolkit.layout.layout import Layout
+from prompt_toolkit.buffer import Buffer
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
@@ -48,24 +53,12 @@ MENU_OPTIONS = [
 ]
 
 BANNER = r"""
-                                     ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
-                                    ██                      ██
-                           ▄▄▄     ██     ▄▄     ▄▄▄▄      ██
-                          ██  █    ██    ██  █   ██         ██
-                        ▄▄██  █▄▄  ██    ██      ██  ██     ██
-                       ██  ████  █ ██     ██▄▄    ██▄▄▄▄     ██
-                       ██    ▄   █ ██      ██▄  ▄ ██         ██
-                        ██████████  ████████████████████████████  ██
-                        ██  ████  █ ██     ██    ██  ██  ██      ██
-                       ██  █  █  █ ██      ██    ██  ██   ██     ██
-                        ██████████  ██     ██    ███████  ██     ██
-                        ██      ██  ██            ██              ██
-                         ██████████  ██████████████████████████████
-                                  ████  ██  ██    ██   ██  ██  ██
-
-                    ═══════════════════════════════════════════════
-                          S T U D Y   M O D E   A C T I V E
-                    ═══════════════════════════════════════════════
+  ███████╗  ██████╗   ██████╗██╗   ██╗███████╗
+  ██╔════╝ ██╔═══██╗ ██╔════╝██║   ██║██╔════╝
+  █████╗   ██║   ██║ ██║     ██║   ██║███████╗
+  ██╔══╝   ██║   ██║ ██║     ██║   ██║╚════██║
+  ██║      ╚██████╔╝ ╚██████╗╚██████╔╝███████║
+  ╚═╝       ╚═════╝   ╚═════╝ ╚═════╝ ╚══════╝
 """
 
 
@@ -638,8 +631,9 @@ def _handle_autostart_toggle() -> None:
 def _handle_manage_apps() -> None:
     """Show all installed apps and let the user pick which ones to block.
 
-    Uses Rich console.print() for colours (matching the main menu's theme)
-    and manual cursor-up clearing to redraw the page in place.
+    Uses a prompt_toolkit full-screen Application that redraws the page in
+    place (like htop). Colours use ansi* tokens so they emit the same codes
+    as the Rich menu (bold cyan numbers, dim hints, green markers).
     """
     cfg = load_config()
     apps = applist.get_app_list()
@@ -652,95 +646,105 @@ def _handle_manage_apps() -> None:
     allowed = set(cfg.blocking.allowed_apps) | applist.ESSENTIAL_APPS
 
     pages = [display_apps[i:i + 20] for i in range(0, len(display_apps), 20)] or [[]]
-    page_idx = 0
-    rendered_lines = 0
+    state = {"page": 0, "status": ""}
+
+    def page_body_fragments() -> list[tuple[str, str]]:
+        frags: list[tuple[str, str]] = [("", "\n")]
+        start = state["page"] * 20
+        for i, app in enumerate(pages[state["page"]], start + 1):
+            marker = "●" if app["key"] in blocked else "○"
+            mark_style = "ansigreen" if app["key"] in blocked else "dim"
+            src = {"desktop": "app", "flatpak": "flatpak", "package": "pkg"}.get(app["source"], "app")
+            ess = "  (essential)" if app["essential"] else ""
+            frags.append((mark_style, f"  {marker}  "))
+            frags.append(("bold ansicyan", f"{i:>3}."))
+            frags.append(("", f"  {app['name'][:26]:<28} "))
+            frags.append(("dim", f"({app['key']}) [ {src} ]"))
+            frags.append(("dim", f"{ess}\n"))
+        return frags
+
+    header_ctrl = FormattedTextControl(
+        lambda: [
+            ("bold ansicyan", f" ❯ Manage Blocked Apps  "),
+            ("", f"Page {state['page'] + 1}/{len(pages)}"),
+            ("dim", "   ← → page · number = toggle · a = all · c = clear · q = quit"),
+            ("bold ansigreen", f"   [{len(blocked)} blocked]"),
+        ]
+    )
+    body_ctrl = FormattedTextControl(lambda: page_body_fragments())
+    status_ctrl = FormattedTextControl(lambda: [("bold ansicyan", state["status"])])
+
+    input_buffer = Buffer()
 
     kb = KeyBindings()
 
     @kb.add(Keys.Right)
     def _(event: Any) -> None:
-        nonlocal page_idx
-        if page_idx < len(pages) - 1:
-            page_idx += 1
-        event.app.exit(True)
+        if state["page"] < len(pages) - 1:
+            state["page"] += 1
+        event.app.invalidate()
 
     @kb.add(Keys.Left)
     def _(event: Any) -> None:
-        nonlocal page_idx
-        if page_idx > 0:
-            page_idx -= 1
-        event.app.exit(True)
+        if state["page"] > 0:
+            state["page"] -= 1
+        event.app.invalidate()
 
-    session = PromptSession(key_bindings=kb)
+    @kb.add("c-c")
+    def _(event: Any) -> None:
+        event.app.exit()
 
-    def clear_last() -> None:
-        nonlocal rendered_lines
-        if rendered_lines <= 0:
-            return
-        import sys as _sys
-        for _ in range(rendered_lines):
-            _sys.stdout.write("\x1b[1A\x1b[2K")
-        _sys.stdout.flush()
-        rendered_lines = 0
-
-    def render_page(msg: str = "") -> None:
-        nonlocal rendered_lines
-        clear_last()
-        console.print(f"[bold cyan]Page {page_idx + 1}/{len(pages)}[/]"
-                      f"  [dim]← → page · number = toggle · a = all · c = clear · q = done[/]"
-                      f"  [bold cyan][{len(blocked)} blocked][/]")
-        start = page_idx * 20
-        for i, app in enumerate(pages[page_idx], start + 1):
-            marker = "[green]●[/]" if app["key"] in blocked else "[dim]○[/]"
-            src = {"desktop": "app", "flatpak": "flatpak", "package": "pkg"}.get(app["source"], "app")
-            ess = " [dim](essential)[/]" if app["essential"] else ""
-            console.print(f"  {marker} [bold cyan]{i:>3}.[/] {app['name']:<28} [dim]({app['key']})[/] [dim]{src}{ess}[/]")
-        if msg:
-            console.print(msg)
-        rendered_lines = 22
-
-    render_page()
-    while True:
-        try:
-            result = session.prompt("apps> ")
-        except (KeyboardInterrupt, EOFError):
-            break
-        if isinstance(result, bool):
-            render_page()
-            continue
-        cmd = result.strip().lower()
+    @kb.add("enter")
+    def _(event: Any) -> None:
+        cmd = input_buffer.text.strip().lower()
+        input_buffer.text = ""
         if not cmd or cmd == "q":
-            break
+            event.app.exit()
+            return
         if cmd in ("a",):
             n = 0
             for app in display_apps:
                 if app["key"] not in allowed and app["key"] not in applist.ESSENTIAL_APPS:
                     blocked.add(app["key"])
                     n += 1
-            render_page(f"[green]Marked {n} apps for blocking.[/]")
-            continue
-        if cmd in ("c",):
-            blocked = set()
-            render_page("[dim]Cleared block list.[/]")
-            continue
-        for tok in cmd.split():
-            if tok.isdigit():
-                idx = int(tok)
-                if 1 <= idx <= len(display_apps):
-                    key = display_apps[idx - 1]["key"]
-                    if key in allowed or key in applist.ESSENTIAL_APPS:
-                        render_page(f"[yellow]'{key}' is essential/allowed, can't block.[/]")
-                        break
-                    if key in blocked:
-                        blocked.discard(key)
-                        render_page(f"[dim]Unblocked {key}.[/]")
-                        break
-                    else:
-                        blocked.add(key)
-                        render_page(f"[green]Blocked {key}.[/]")
-                        break
+            state["status"] = f"Marked {n} apps for blocking."
+        elif cmd in ("c",):
+            blocked.clear()
+            state["status"] = "Cleared block list."
+        else:
+            for tok in cmd.split():
+                if tok.isdigit():
+                    idx = int(tok)
+                    if 1 <= idx <= len(display_apps):
+                        key = display_apps[idx - 1]["key"]
+                        if key in allowed or key in applist.ESSENTIAL_APPS:
+                            state["status"] = f"'{key}' is essential/allowed, can't block."
+                        elif key in blocked:
+                            blocked.discard(key)
+                            state["status"] = f"Unblocked {key}."
+                        else:
+                            blocked.add(key)
+                            state["status"] = f"Blocked {key}."
+                    break
+        event.app.invalidate()
+
+    layout = HSplit([
+        Window(content=header_ctrl, height=1),
+        Window(content=body_ctrl, always_hide_cursor=True),
+        Window(content=status_ctrl, height=1),
+        Window(content=BufferControl(buffer=input_buffer), height=1, wrap_lines=False),
+    ])
+
+    app = Application(
+        layout=Layout(layout),
+        key_bindings=kb,
+        full_screen=True,
+        mouse_support=False,
+    )
+    app.run()
 
     cfg.blocking.apps = sorted(blocked)
     save_config(cfg)
+    console.print()
     console.print(f"[green]Saved. {len(blocked)} app(s) will be blocked during sessions.[/]")
     applist.update_snapshot()
